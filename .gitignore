@@ -1,0 +1,36 @@
+# ===== Python Backend =====
+backend/venv/
+backend/__pycache__/
+backend/core/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/*.pyo
+
+# ===== Dataset & Training Data (too large for GitHub) =====
+backend/data/datasets/
+backend/data/videos/
+backend/data/master_dataset/
+backend/data/debug_annotations/
+backend/data/debug_annotations2/
+
+# ===== Trained Model Weights (binary, very large) =====
+backend/data/models/
+backend/runs/
+
+# ===== Keep the registry (it tracks product class IDs) =====
+!backend/data/products_registry.json
+
+# ===== YOLOv8 base model (downloaded automatically) =====
+backend/yolov8n.pt
+
+# ===== Frontend =====
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ===== OS & Editor =====
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

@@ -1,0 +1,66 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  body {
+    @apply bg-dashboard-bg text-dashboard-text font-sans antialiased;
+  }
+}
+
+@layer components {
+
+  /* Futuristic HUD style container */
+  .hud-container {
+    @apply border border-dashboard-border bg-dashboard-card/80 rounded-xl p-4 shadow-xl backdrop-blur-md;
+    box-shadow: 0 0 15px rgba(0, 204, 255, 0.05);
+  }
+
+  .hud-container-accent {
+    @apply relative border border-bmw-cyan bg-dashboard-card rounded-xl p-4 shadow-xl;
+    box-shadow: 0 0 20px rgba(0, 204, 255, 0.1);
+  }
+
+  .hud-container-accent::before {
+    content: '';
+    @apply absolute top-0 left-0 w-2 h-full bg-bmw-cyan/80 rounded-l-xl;
+  }
+
+  /* Button styles */
+  .btn-primary {
+    @apply px-4 py-2 bg-bmw-cyan text-dashboard-bg font-semibold rounded-lg hover:opacity-90 transition-all flex items-center justify-center gap-2;
+    box-shadow: 0 0 10px rgba(0, 204, 255, 0.3);
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-dashboard-border text-dashboard-text font-semibold rounded-lg hover:opacity-80 transition-all flex items-center justify-center gap-2;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-bmw-red text-white font-semibold rounded-lg hover:opacity-90 transition-all flex items-center justify-center gap-2;
+    box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
+  }
+
+  /* Input styles */
+  .hud-input {
+    @apply bg-dashboard-bg border border-dashboard-border text-dashboard-text rounded-md px-3 py-2 outline-none focus:border-bmw-cyan transition-colors;
+  }
+}
+
+/* Custom scrollbar for HUD panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00CCFF;
+}
