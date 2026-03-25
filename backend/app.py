@@ -253,7 +253,7 @@ def load_model():
     result = {"success": False, "message": ""}
     
     def _load():
-        global current_model
+        global current_model, current_model_type
         with model_lock:
             try:
                 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -430,7 +430,7 @@ def handle_frame(data):
                     "confidence": conf, "class": name
                 })
         
-        emit('detections', {"boxes": boxes})
+        emit('detections', {"detections": boxes})
     except Exception as e:
         emit('detections', {'error': str(e)})
 
