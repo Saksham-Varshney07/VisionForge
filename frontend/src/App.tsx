@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Camera, Layers, Box, Cpu, Play, Square, Activity, Upload, RefreshCw, Database, ShoppingCart, CheckCircle, XCircle, Plus, Minus, Trash2 } from 'lucide-react'
+import { Camera, Layers, Box, Cpu, Play, Square, Activity, Upload, RefreshCw, Database, ShoppingCart, CheckCircle, XCircle, Plus, Minus, Trash2, ScanText, Barcode } from 'lucide-react'
+import { BrowserMultiFormatReader, DecodeHintType } from '@zxing/library'
 import { io, Socket } from 'socket.io-client'
 
 function App() {
@@ -20,6 +21,97 @@ function App() {
   const [cart, setCart] = useState<{name: string, qty: number}[]>([]);
   const [showCartDropdown, setShowCartDropdown] = useState(false);
   const lastHandledRef = useRef<Record<string, number>>({});
+
+  // Barcode / QR Feature
+  const [isBarcodeScanning, setIsBarcodeScanning] = useState(false);
+  const barcodeScanningRef = useRef(false);
+  const [scannedProduct, setScannedProduct] = useState<any>(null);
+
+  // Manual Scan feature
+  const scanIdRef = useRef(0);
+  const [manualScanState, setManualScanState] = useState<'idle' | 'drawing' | 'identifying'>('idle');
+  const [snapshotData, setSnapshotData] = useState<string | null>(null);
+  const [manualBox, setManualBox] = useState<{x: number, y: number, w: number, h: number} | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawStart, setDrawStart] = useState({x: 0, y: 0});
+
+  const handleManualScanClick = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+      setSnapshotData(canvas.toDataURL('image/jpeg', 0.9));
+      setManualScanState('drawing');
+      setStreamActive(false); 
+      setManualBox(null);
+    }
+  };
+
+  const handleIdentifyManual = async () => {
+    if (!snapshotData || !manualBox) return;
+    setManualScanState('identifying');
+    
+    // Scale box coordinates from displayed image size back to original natural image resolution
+    const imgElement = document.getElementById('snapshot-image') as HTMLImageElement;
+    const scaleX = imgElement.naturalWidth / imgElement.width;
+    const scaleY = imgElement.naturalHeight / imgElement.height;
+    
+    const realBox = {
+      x: Math.round(manualBox.x * scaleX),
+      y: Math.round(manualBox.y * scaleY),
+      w: Math.round(manualBox.w * scaleX),
+      h: Math.round(manualBox.h * scaleY)
+    };
+
+    const currentScanId = ++scanIdRef.current;
+
+    try {
+      // Force a 5-second interval for deep AI analysis as requested
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      // If user cancelled or restarted during the wait, abort update
+      if (scanIdRef.current !== currentScanId) return;
+
+      const res = await fetch(`${API_URL}/api/scan_manual`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ image: snapshotData, box: realBox })
+      });
+      const data = await res.json();
+      
+      // If user cancelled during fetch, abort update
+      if (scanIdRef.current !== currentScanId) return;
+
+      if (data.success && data.class) {
+        setRecognizedProduct({ name: data.class, confidence: data.confidence });
+        setManualScanState('idle');
+        setSnapshotData(null);
+        setManualBox(null);
+      } else {
+        addEvent(`[ERROR] Manual Scan: ${data.message || 'No confident match. Try again.'}`);
+        // Redirect user back to box drawing endpoint instead of canceling
+        setManualScanState('drawing');
+        setManualBox(null);
+      }
+    } catch (err) {
+      if (scanIdRef.current !== currentScanId) return;
+      addEvent(`[ERROR] Manual Scan API failed.`);
+      setManualScanState('drawing');
+      setManualBox(null);
+    }
+  };
+
+  const cancelManualScan = () => {
+    scanIdRef.current++; // Invalidate any running scan promises
+    setManualScanState('idle');
+    setSnapshotData(null);
+    setManualBox(null);
+    setStreamActive(true);
+  };
+
 
   const addToCart = (name: string) => {
     setCart(prev => {
@@ -106,7 +198,7 @@ function App() {
     setEvents(prev => [...prev.slice(-19), msg]);
   };
 
-  const API_URL = `http://${window.location.hostname}:5000`;
+  const API_URL = `${window.location.protocol}//${window.location.hostname}:5000`;
 
   useEffect(() => {
     socketRef.current = io(API_URL);
@@ -177,13 +269,107 @@ function App() {
         if (videoRef.current) videoRef.current.srcObject = stream;
         addEvent('[HARDWARE] Camera initialized.');
 
+        const hints = new Map();
+        hints.set(DecodeHintType.TRY_HARDER, true);
+        const zxingReader = new BrowserMultiFormatReader(hints);
+        let nativeBarcodeDetector: any = null;
+        if ('BarcodeDetector' in window) {
+           nativeBarcodeDetector = new (window as any).BarcodeDetector();
+        }
+        
         const sendFrame = () => {
           if (!streamRef.current || !videoRef.current || !socketRef.current) return;
+
+          if (barcodeScanningRef.current) {
+             setDetections([]);
+             
+             const processCode = (code: string) => {
+                 barcodeScanningRef.current = false;
+                 setIsBarcodeScanning(false);
+                 addEvent(`[SYSTEM] Scanned code: ${code}. Fetching data...`);
+                 
+                 fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`)
+                   .then(r => r.json())
+                   .then(data => {
+                       if (data.status === 1 && data.product) {
+                           const p = data.product;
+                           setScannedProduct({
+                               id: code,
+                               name: p.product_name || p.generic_name || 'Unknown Product',
+                               brand: p.brands ? p.brands.split(',')[0] : 'Unknown Brand',
+                               image: p.image_url || p.image_front_url,
+                               isVeg: p.ingredients_analysis_tags ? 
+                                      (p.ingredients_analysis_tags.includes('en:vegetarian') ? true : 
+                                      (p.ingredients_analysis_tags.includes('en:non-vegetarian') ? false : null)) : null,
+                               nutriScore: p.nutriscore_grade ? p.nutriscore_grade.toUpperCase() : 'N/A'
+                           });
+                       } else {
+                          addEvent(`[ERROR] Product ${code} not found in database.`);
+                          barcodeScanningRef.current = true;
+                          setIsBarcodeScanning(true);
+                       }
+                   }).catch(() => {
+                       addEvent(`[ERROR] Network failed reaching OpenFoodFacts.`);
+                       barcodeScanningRef.current = true;
+                       setIsBarcodeScanning(true);
+                   });
+                 
+                 // CRITICAL FIX: Keep the background loop alive after a successful scan!
+                 requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 100);
+             };
+
+             if (nativeBarcodeDetector) {
+                 // Native BarcodeDetector works massively better on raw, full-res DOM elements
+                 nativeBarcodeDetector.detect(videoRef.current)
+                     .then((barcodes: any[]) => {
+                         if (barcodes.length > 0 && barcodeScanningRef.current) {
+                             processCode(barcodes[0].rawValue);
+                         } else {
+                             requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
+                         }
+                     })
+                     .catch(() => {
+                         requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
+                     });
+             } else {
+                 const hiddenCanvas = document.createElement('canvas');
+                 hiddenCanvas.width = videoRef.current.videoWidth || 854;
+                 hiddenCanvas.height = videoRef.current.videoHeight || 480;
+                 const ctx = hiddenCanvas.getContext('2d');
+                 if (ctx) {
+                     ctx.imageSmoothingEnabled = false;
+                     ctx.drawImage(videoRef.current, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+                     const img = new Image();
+                     img.src = hiddenCanvas.toDataURL('image/png');
+                     img.onload = async () => {
+                         if (!barcodeScanningRef.current) return;
+                         try {
+                             const result = await zxingReader.decodeFromImageElement(img);
+                             if (result) {
+                                 processCode(result.getText());
+                             } else {
+                                 requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
+                             }
+                         } catch (e) {
+                             requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
+                         }
+                     };
+                     img.onerror = () => {
+                         requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
+                     };
+                 } else {
+                     requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
+                 }
+             }
+             return;
+          }
+
           const hiddenCanvas = document.createElement('canvas');
-          // Scale it down slightly for the network stream to prevent latency or out of memory
-          // 854x480 is 480p 16:9, which is a good sweet spot for live YOLO inference 
-          const targetWidth = 854;
-          const targetHeight = 480;
+          
+          // Calculate scale to keep the max resolution around 480p equivalent without crushing the aspect ratio!
+          const scale = Math.min(854 / videoRef.current.videoWidth, 480 / videoRef.current.videoHeight);
+          const targetWidth = Math.round(videoRef.current.videoWidth * scale);
+          const targetHeight = Math.round(videoRef.current.videoHeight * scale);
 
           hiddenCanvas.width = targetWidth;
           hiddenCanvas.height = targetHeight;
@@ -374,6 +560,59 @@ function App() {
         </div>
       </header>
 
+      {/* Barcode Product Dialog Modal */}
+      {scannedProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-dashboard-bg border border-bmw-cyan/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-w-sm w-full mx-4" style={{boxShadow: '0 0 40px rgba(0,204,255,0.2)'}}>
+            {scannedProduct.image ? (
+              <div className="h-48 w-full bg-white flex items-center justify-center p-4 relative">
+                <img src={scannedProduct.image} alt={scannedProduct.name} className="h-full object-contain mix-blend-multiply" />
+                {scannedProduct.isVeg !== null && (
+                  <div className="absolute top-4 right-4 bg-white rounded-md p-1 shadow-md border border-gray-200">
+                    <div className={`w-5 h-5 border-[1.5px] flex items-center justify-center ${scannedProduct.isVeg ? 'border-green-600' : 'border-red-600'}`}>
+                      <div className={`w-2.5 h-2.5 rounded-full ${scannedProduct.isVeg ? 'bg-green-600' : 'bg-red-600'}`}></div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="h-32 w-full bg-dashboard-border flex items-center justify-center text-dashboard-muted">
+                No Image Available
+              </div>
+            )}
+            <div className="p-6 flex flex-col gap-4">
+              <div className="text-center">
+                <p className="text-xs uppercase tracking-widest text-dashboard-muted font-mono mb-1">{scannedProduct.brand}</p>
+                <h2 className="text-xl font-bold text-dashboard-text capitalize leading-tight">{scannedProduct.name}</h2>
+                <div className="flex items-center justify-center gap-2 mt-2">
+                  <span className="text-xs px-2 py-0.5 rounded bg-dashboard-border text-dashboard-muted font-mono">ID: {scannedProduct.id}</span>
+                  {scannedProduct.nutriScore !== 'N/A' && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-bmw-cyan/20 text-bmw-cyan font-bold">NutriScore: {scannedProduct.nutriScore}</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-3 w-full mt-2">
+                <button
+                  className="flex-1 py-3 rounded-xl bg-bmw-cyan text-dashboard-bg font-bold uppercase text-xs tracking-wider flex items-center justify-center gap-2 hover:bg-cyan-400 transition-all"
+                  onClick={() => {
+                    addToCart(scannedProduct.name);
+                    setScannedProduct(null);
+                  }}
+                >
+                  <CheckCircle className="w-4 h-4" /> Add to Cart
+                </button>
+                <button
+                  className="px-4 py-3 rounded-xl bg-dashboard-border text-dashboard-muted font-bold uppercase flex items-center justify-center hover:text-dashboard-text transition-all"
+                  onClick={() => setScannedProduct(null)}
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Recognition Dialog Modal */}
       {recognizedProduct && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -430,6 +669,19 @@ function App() {
                 >
                   {streamActive ? <Square className="w-5 h-5" /> : <Play className="w-5 h-5" fill="currentColor" />}
                   {streamActive ? 'Stop Stream' : 'Start Stream'}
+                </button>
+                <button
+                  className={`py-2 rounded-lg font-bold uppercase text-xs tracking-wider border flex items-center justify-center gap-2 transition-all ${!streamActive ? 'opacity-50 cursor-not-allowed border-dashboard-border text-dashboard-muted' : isBarcodeScanning ? 'bg-bmw-cyan text-dashboard-bg border-bmw-cyan shadow-[0_0_15px_rgba(0,204,255,0.5)]' : 'bg-dashboard-bg border-bmw-cyan text-bmw-cyan hover:bg-bmw-cyan/10'}`}
+                  disabled={!streamActive}
+                  onClick={() => {
+                    const next = !isBarcodeScanning;
+                    setIsBarcodeScanning(next);
+                    barcodeScanningRef.current = next;
+                    if (next) addEvent('[SYSTEM] Barcode scanner engaged. Hold product to camera.');
+                  }}
+                >
+                  <Barcode className="w-4 h-4" />
+                  {isBarcodeScanning ? 'Scanning Barcode...' : 'Scan Barcode / QR'}
                 </button>
                 <button
                   className={`btn-secondary uppercase text-xs tracking-wider ${activeModel === 'default' ? 'bg-dashboard-border text-white border-bmw-cyan border' : ''} ${modelLoading !== null ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -495,7 +747,82 @@ function App() {
                 <Camera className="w-3 h-3 text-bmw-cyan" /> Camera_01
               </span>
             </div>
-            {streamActive ? (
+            {streamActive && manualScanState === 'idle' && (
+              <button 
+                className="absolute top-4 right-4 z-10 bg-dashboard-bg/80 hover:bg-bmw-cyan text-dashboard-text hover:text-dashboard-bg border border-dashboard-border backdrop-blur-sm text-xs px-3 py-1.5 rounded-lg font-bold uppercase transition-colors flex items-center gap-2"
+                onClick={handleManualScanClick}
+              >
+                <ScanText className="w-4 h-4" /> Scan Manually
+              </button>
+            )}
+            {isBarcodeScanning && (
+              <div className="absolute inset-0 z-20 flex flex-col items-center justify-center pointer-events-none">
+                <div className="w-64 h-64 border-4 border-bmw-cyan/50 rounded-2xl relative shadow-[0_0_50px_rgba(0,204,255,0.2)]">
+                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-bmw-cyan rounded-tl-xl -m-[4px]"></div>
+                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-bmw-cyan rounded-tr-xl -m-[4px]"></div>
+                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-bmw-cyan rounded-bl-xl -m-[4px]"></div>
+                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-bmw-cyan rounded-br-xl -m-[4px]"></div>
+                  <div className="w-full h-1 bg-bmw-cyan animate-[bounce_2s_infinite] shadow-[0_0_10px_#00ccff]"></div>
+                </div>
+                <div className="mt-6 bg-black/50 backdrop-blur-md px-4 py-2 rounded-full border border-dashboard-border">
+                  <p className="text-white font-mono text-sm uppercase tracking-widest animate-[pulse_1s_infinite]">Scan Code To Add Item</p>
+                </div>
+              </div>
+            )}
+            
+            {manualScanState !== 'idle' && snapshotData ? (
+              <div className="w-full h-full relative flex flex-col items-center justify-center p-4">
+                <h3 className="text-dashboard-text font-bold uppercase mb-2">Draw Box Around Product</h3>
+                <div 
+                  className="relative cursor-crosshair inline-block max-w-full max-h-[80%]"
+                  onMouseDown={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    setIsDrawing(true);
+                    setDrawStart({x, y});
+                    setManualBox({x, y, w: 0, h: 0});
+                  }}
+                  onMouseMove={(e) => {
+                    if (!isDrawing) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const currentX = e.clientX - rect.left;
+                    const currentY = e.clientY - rect.top;
+                    setManualBox({
+                      x: Math.min(drawStart.x, currentX),
+                      y: Math.min(drawStart.y, currentY),
+                      w: Math.abs(currentX - drawStart.x),
+                      h: Math.abs(currentY - drawStart.y)
+                    });
+                  }}
+                  onMouseUp={() => setIsDrawing(false)}
+                  onMouseLeave={() => setIsDrawing(false)}
+                >
+                  <img id="snapshot-image" src={snapshotData} className="max-w-full max-h-full object-contain pointer-events-none" alt="Snapshot" />
+                  {manualBox && (
+                    <div 
+                      className="absolute border-2 border-bmw-cyan bg-bmw-cyan/20 pointer-events-none"
+                      style={{
+                        left: manualBox.x,
+                        top: manualBox.y,
+                        width: manualBox.w,
+                        height: manualBox.h
+                      }}
+                    />
+                  )}
+                </div>
+                <div className="flex gap-4 mt-4">
+                  <button onClick={cancelManualScan} className="btn-secondary">Cancel</button>
+                  <button 
+                    onClick={handleIdentifyManual} 
+                    className="btn-primary" 
+                    disabled={manualScanState === 'identifying' || !manualBox || manualBox.w < 10 || manualBox.h < 10}
+                  >
+                    {manualScanState === 'identifying' ? 'Identifying...' : 'Identify Product'}
+                  </button>
+                </div>
+              </div>
+            ) : streamActive ? (
               <div className="w-full h-full relative flex items-center justify-center overflow-hidden">
                 <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />
                 <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />

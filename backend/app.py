@@ -382,6 +382,67 @@ def train():
     else:
         return jsonify({"success": False, "message": res})
 
+@app.route('/api/scan_manual', methods=['POST'])
+def scan_manual():
+    global current_model
+    if current_model is None:
+        return jsonify({"success": False, "message": "No model loaded"}), 400
+        
+    data = request.json
+    image_data = data.get('image')
+    box = data.get('box')
+    
+    if not image_data or not box:
+        return jsonify({"success": False, "message": "Missing image or box data"}), 400
+        
+    try:
+        if ',' in image_data:
+            image_data = image_data.split(',')[1]
+            
+        b64_decoded = base64.b64decode(image_data)
+        np_arr = np.frombuffer(b64_decoded, np.uint8)
+        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        
+        h_img, w_img = img.shape[:2]
+        x1 = max(0, int(box.get('x', 0)))
+        y1 = max(0, int(box.get('y', 0)))
+        w = max(0, int(box.get('w', 0)))
+        h = max(0, int(box.get('h', 0)))
+        x2 = min(w_img, x1 + w)
+        y2 = min(h_img, y1 + h)
+        
+        if x2 <= x1 or y2 <= y1:
+            return jsonify({"success": False, "message": "Invalid bounding box"}), 400
+            
+        cropped_img = img[y1:y2, x1:x2]
+        
+        with model_lock:
+            # Use lower threshold to be forgiving on tight crops
+            results = current_model(cropped_img, verbose=False, device='cpu', conf=0.05)
+            
+        best_det = None
+        best_conf = -1
+        
+        for r in results:
+            for b in r.boxes:
+                conf = float(b.conf[0])
+                if conf > best_conf:
+                    best_conf = conf
+                    cls = int(b.cls[0])
+                    best_det = current_model.names[cls]
+                    
+        if best_det and best_conf >= 0.1: # At least 10% confident for manual tightly cropped boxes
+            return jsonify({
+                "success": True, 
+                "class": best_det, 
+                "confidence": best_conf
+            }), 200
+        else:
+            return jsonify({"success": False, "message": "No confident detection found in area."}), 200
+            
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Scan failed: {str(e)}"}), 500
+
 @socketio.on('connect')
 def test_connect():
     print("Socket connected!")
@@ -435,4 +496,4 @@ def handle_frame(data):
         emit('detections', {'error': str(e)})
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000, ssl_context='adhoc')
