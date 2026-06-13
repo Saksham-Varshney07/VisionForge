@@ -9,6 +9,7 @@ backend/*.pyo
 # ===== Dataset & Training Data (too large for GitHub) =====
 backend/data/datasets/
 backend/data/videos/
+backend/data/frames/
 backend/data/master_dataset/
 backend/data/debug_annotations/
 backend/data/debug_annotations2/
