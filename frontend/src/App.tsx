@@ -486,7 +486,7 @@ function App() {
             <Layers className="text-dashboard-bg w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-wider uppercase text-dashboard-text">Vision<span className="text-bmw-cyan">Detect</span></h1>
+            <h1 className="text-xl font-bold tracking-wider uppercase text-dashboard-text">Vision<span className="text-bmw-cyan">Forge</span></h1>
             <p className="text-xs text-dashboard-muted font-mono tracking-widest uppercase">Real-time Product Inspection</p>
           </div>
         </div>

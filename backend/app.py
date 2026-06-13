@@ -44,7 +44,7 @@ model_lock = threading.Lock()
 def get_status():
     return jsonify({
         "status": "online",
-        "message": "VisionDetect API is running",
+        "message": "VisionForge API is running",
         "engine": "YOLOv8",
         "model_loaded": current_model is not None
     }), 200

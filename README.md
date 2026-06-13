@@ -14,6 +14,22 @@ A real-time product recognition system built with YOLOv8, Flask, and React. Trai
 
 ---
 
+## Features in Action
+
+### 1. Dynamic Training Pipeline
+Upload a video of any product, and VisionForge will automatically extract frames, generate annotations, and retrain the custom YOLOv8 model dynamically.
+![Training Pipeline](images/producttrainingpipeline.png)
+
+### 2. Live Barcode & QR Code Integration
+Scan the barcode of any physical product to automatically pull its details and register it into the system.
+![Barcode Scanning](images/fevistick.png)
+
+### 3. Real-Time Object Detection
+Once trained, the custom model can accurately recognize your products in real-time via the webcam feed with high confidence scores.
+![Product Recognition](images/fevistickrecognized.png)
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
