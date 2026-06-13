@@ -496,4 +496,4 @@ def handle_frame(data):
         emit('detections', {'error': str(e)})
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000, ssl_context='adhoc')
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)

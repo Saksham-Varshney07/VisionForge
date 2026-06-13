@@ -288,7 +288,7 @@ function App() {
                  setIsBarcodeScanning(false);
                  addEvent(`[SYSTEM] Scanned code: ${code}. Fetching data...`);
                  
-                 fetch(`https://world.openfoodfacts.org/api/v0/product/${code}.json`)
+                 fetch(`https://in.openfoodfacts.org/api/v0/product/${code}.json`)
                    .then(r => r.json())
                    .then(data => {
                        if (data.status === 1 && data.product) {
@@ -318,27 +318,21 @@ function App() {
                  requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 100);
              };
 
-             if (nativeBarcodeDetector) {
-                 // Native BarcodeDetector works massively better on raw, full-res DOM elements
-                 nativeBarcodeDetector.detect(videoRef.current)
-                     .then((barcodes: any[]) => {
-                         if (barcodes.length > 0 && barcodeScanningRef.current) {
-                             processCode(barcodes[0].rawValue);
-                         } else {
-                             requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
-                         }
-                     })
-                     .catch(() => {
-                         requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
-                     });
-             } else {
+             const runZxing = () => {
                  const hiddenCanvas = document.createElement('canvas');
-                 hiddenCanvas.width = videoRef.current.videoWidth || 854;
-                 hiddenCanvas.height = videoRef.current.videoHeight || 480;
+                 const vw = videoRef.current!.videoWidth || 854;
+                 const vh = videoRef.current!.videoHeight || 480;
+                 
+                 hiddenCanvas.width = vw;
+                 hiddenCanvas.height = vh;
+                 
                  const ctx = hiddenCanvas.getContext('2d');
                  if (ctx) {
                      ctx.imageSmoothingEnabled = false;
-                     ctx.drawImage(videoRef.current, 0, 0, hiddenCanvas.width, hiddenCanvas.height);
+                     
+                     // Draw the full video frame without cropping
+                     ctx.drawImage(videoRef.current!, 0, 0, vw, vh);
+                     
                      const img = new Image();
                      img.src = hiddenCanvas.toDataURL('image/png');
                      img.onload = async () => {
@@ -348,9 +342,12 @@ function App() {
                              if (result) {
                                  processCode(result.getText());
                              } else {
+                                 // Add a heartbeat log every roughly 30 frames so we know it's actively scanning
+                                 if (Math.random() < 0.03) addEvent('[SYSTEM] Scanner analyzing frame (move camera to focus)...');
                                  requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
                              }
                          } catch (e) {
+                             if (Math.random() < 0.03) addEvent('[SYSTEM] Scanner analyzing frame (move camera to focus)...');
                              requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
                          }
                      };
@@ -360,6 +357,24 @@ function App() {
                  } else {
                      requestRef.current = setTimeout(() => { if (streamRef.current) sendFrame(); }, 300);
                  }
+             };
+
+             if (nativeBarcodeDetector) {
+                 // Native BarcodeDetector works massively better on raw, full-res DOM elements
+                 nativeBarcodeDetector.detect(videoRef.current)
+                     .then((barcodes: any[]) => {
+                         if (barcodes.length > 0 && barcodeScanningRef.current) {
+                             processCode(barcodes[0].rawValue);
+                         } else {
+                             runZxing();
+                         }
+                     })
+                     .catch((e: any) => {
+                         console.error("BarcodeDetector Error:", e);
+                         runZxing();
+                     });
+             } else {
+                 runZxing();
              }
              return;
           }
